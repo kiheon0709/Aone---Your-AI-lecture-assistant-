@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronDown, ChevronUp, Play } from "lucide-react";
 import TipTapEditor from "./TipTapEditor";
-import { saveSlideSummary, fetchSlideSummaries } from "@/lib/slideSummaries";
+import { updateSlideSummary, fetchSlideSummaries } from "@/lib/slideSummaries";
 
 interface SlideSummary {
   slideNumber: number;
@@ -90,7 +90,7 @@ export default function SlideSummaryView({
     saveTimeouts.current[slideNumber] = setTimeout(async () => {
       setSaving(prev => ({ ...prev, [slideNumber]: true }));
       try {
-        await saveSlideSummary(documentId, slideNumber, content);
+        await updateSlideSummary(documentId, slideNumber, content);
       } catch (err) {
         console.error("요약 저장 실패:", err);
         alert("요약 저장에 실패했습니다.");

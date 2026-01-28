@@ -8,6 +8,11 @@ import SummaryTabs from "@/components/document/SummaryTabs";
 import { fetchFiles, getFileUrl, deleteFile, FileMetadata } from "@/lib/files";
 import { getCurrentUser } from "@/lib/auth";
 import AuthGuard from "@/components/auth/AuthGuard";
+import { 
+  fetchSlideSummaries, 
+  generateSlideSummaries, 
+  SlideSummary 
+} from "@/lib/slideSummaries";
 
 // PDFViewer를 Dynamic Import로 로드 (브라우저에서만 실행)
 const PDFViewer = dynamic(
@@ -34,10 +39,22 @@ function DocumentContent({ params }: { params: Promise<{ id: string }> }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
+  
+  // 슬라이드 요약 관련 상태
+  const [slideSummaries, setSlideSummaries] = useState<SlideSummary[]>([]);
+  const [generatingSummaries, setGeneratingSummaries] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   useEffect(() => {
     loadDocument();
   }, [resolvedParams.id]);
+
+  // 슬라이드 요약 자동 생성
+  useEffect(() => {
+    if (fileData && fileData.type === 'pdf') {
+      loadOrGenerateSummaries();
+    }
+  }, [fileData]);
 
   const loadDocument = async () => {
     try {
@@ -71,6 +88,39 @@ function DocumentContent({ params }: { params: Promise<{ id: string }> }) {
       setError(err.message || "문서를 불러오는 중 오류가 발생했습니다.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadOrGenerateSummaries = async () => {
+    if (!fileData) return;
+
+    try {
+      setSummaryError(null);
+      
+      // 먼저 기존 요약이 있는지 확인
+      const existingSummaries = await fetchSlideSummaries(fileData.id);
+      
+      if (existingSummaries && existingSummaries.length > 0) {
+        console.log('기존 슬라이드 요약 로드:', existingSummaries.length, '개');
+        setSlideSummaries(existingSummaries);
+      } else {
+        // 없으면 자동 생성
+        console.log('슬라이드 요약이 없습니다. 자동 생성 시작...');
+        setGeneratingSummaries(true);
+        
+        const newSummaries = await generateSlideSummaries(
+          fileData.id,
+          fileData.storage_path
+        );
+        
+        console.log('슬라이드 요약 생성 완료:', newSummaries.length, '개');
+        setSlideSummaries(newSummaries);
+        setGeneratingSummaries(false);
+      }
+    } catch (err: any) {
+      console.error('슬라이드 요약 로드/생성 실패:', err);
+      setSummaryError(err.message || '슬라이드 요약 생성에 실패했습니다.');
+      setGeneratingSummaries(false);
     }
   };
 
@@ -116,28 +166,32 @@ function DocumentContent({ params }: { params: Promise<{ id: string }> }) {
     );
   }
 
-  // 빈 요약 데이터로 시작 (TipTap JSON 형식)
-  const emptyTipTapContent = {
-    type: 'doc',
-    content: [],
-  };
-
   // PDF에서 읽은 페이지 수를 우선 사용, 없으면 DB의 page_count, 그것도 없으면 1
   const pageCount = pdfPageCount || fileData.page_count || 1;
+
+  // 슬라이드 요약 데이터 매핑
+  const mappedSlideSummaries = Array.from({ length: pageCount }, (_, i) => {
+    const slideNumber = i + 1;
+    const summary = slideSummaries.find(s => s.slide_number === slideNumber);
+    
+    return {
+      slideNumber,
+      title: `Slide ${slideNumber}`,
+      summaryContent: summary?.summary_content || null,
+      userNotesContent: summary?.user_notes_content || null,
+      audioSegments: [],
+    };
+  });
 
   const documentData = {
     id: fileData.id,
     name: fileData.name,
     pdfUrl: pdfUrl,
     totalSlides: pageCount,
-    slideSummaries: Array.from({ length: pageCount }, (_, i) => ({
-      slideNumber: i + 1,
-      title: `Slide ${i + 1}`,
-      summaryContent: null, // 빈 상태로 시작
-      userNotesContent: null, // 빈 상태로 시작
-      audioSegments: [],
-    })),
+    slideSummaries: mappedSlideSummaries,
     fullSummary: null,
+    isGeneratingSummaries: generatingSummaries,
+    summaryError: summaryError,
   };
 
   return (
@@ -195,13 +249,39 @@ function DocumentContent({ params }: { params: Promise<{ id: string }> }) {
 
             {/* 우측: 요약 탭 */}
             <div className="w-1/2 bg-white">
-              <SummaryTabs
-                documentId={documentData.id}
-                slideSummaries={documentData.slideSummaries}
-                fullSummary={documentData.fullSummary}
-                currentSlide={currentSlide}
-                onSlideChange={setCurrentSlide}
-              />
+              {generatingSummaries ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                    <p className="text-gray-800 font-semibold mb-2">
+                      AI가 슬라이드를 분석하고 있습니다...
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      잠시만 기다려주세요 (약 30초 ~ 1분 소요)
+                    </p>
+                  </div>
+                </div>
+              ) : summaryError ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center max-w-md px-4">
+                    <p className="text-red-600 mb-4">{summaryError}</p>
+                    <button
+                      onClick={loadOrGenerateSummaries}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                    >
+                      다시 시도
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <SummaryTabs
+                  documentId={documentData.id}
+                  slideSummaries={documentData.slideSummaries}
+                  fullSummary={documentData.fullSummary}
+                  currentSlide={currentSlide}
+                  onSlideChange={setCurrentSlide}
+                />
+              )}
             </div>
           </>
         ) : (

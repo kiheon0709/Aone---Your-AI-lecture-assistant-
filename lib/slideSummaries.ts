@@ -12,6 +12,31 @@ export interface SlideSummary {
 }
 
 /**
+ * 슬라이드 요약을 생성합니다 (API 호출)
+ */
+export async function generateSlideSummaries(
+  documentId: string,
+  storagePath: string
+): Promise<SlideSummary[]> {
+  const response = await fetch('/api/summarize/slides', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ documentId, storagePath }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || '슬라이드 요약 생성 실패');
+  }
+
+  const data = await response.json();
+  console.log('슬라이드 요약 생성 완료:', data.count, '개');
+  
+  // 생성된 요약 조회
+  return await fetchSlideSummaries(documentId);
+}
+
+/**
  * 슬라이드 요약을 조회합니다.
  */
 export async function fetchSlideSummaries(documentId: string): Promise<SlideSummary[]> {
@@ -30,66 +55,30 @@ export async function fetchSlideSummaries(documentId: string): Promise<SlideSumm
 }
 
 /**
- * 슬라이드 요약을 저장/업데이트합니다.
+ * 슬라이드 요약 내용을 업데이트합니다 (사용자 편집)
  */
-export async function saveSlideSummary(
+export async function updateSlideSummary(
   documentId: string,
   slideNumber: number,
   summaryContent: any, // TipTap JSON
-  userNotesContent?: any // TipTap JSON
 ): Promise<SlideSummary> {
-  const user = await getCurrentUser();
-  if (!user) {
-    throw new Error('로그인이 필요합니다.');
-  }
-
-  // 기존 요약이 있는지 확인
-  const { data: existing } = await supabase
+  const { data, error } = await supabase
     .from('slide_summaries')
-    .select('id')
+    .update({
+      summary_content: summaryContent,
+      updated_at: new Date().toISOString(),
+    })
     .eq('document_id', documentId)
     .eq('slide_number', slideNumber)
+    .select()
     .single();
 
-  if (existing) {
-    // 업데이트
-    const { data, error } = await supabase
-      .from('slide_summaries')
-      .update({
-        summary_content: summaryContent,
-        user_notes_content: userNotesContent || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error updating slide summary:', error);
-      throw new Error(`슬라이드 요약 업데이트 실패: ${error.message}`);
-    }
-
-    return data;
-  } else {
-    // 새로 생성
-    const { data, error } = await supabase
-      .from('slide_summaries')
-      .insert({
-        document_id: documentId,
-        slide_number: slideNumber,
-        summary_content: summaryContent,
-        user_notes_content: userNotesContent || null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error creating slide summary:', error);
-      throw new Error(`슬라이드 요약 생성 실패: ${error.message}`);
-    }
-
-    return data;
+  if (error) {
+    console.error('Error updating slide summary:', error);
+    throw new Error(`슬라이드 요약 업데이트 실패: ${error.message}`);
   }
+
+  return data;
 }
 
 /**
